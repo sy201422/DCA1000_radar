@@ -1,0 +1,61 @@
+{
+  "settings_path": "C:\\Users\\sy201\\U\\4-1\\C\\DCA1000_radar\\config\\live_motion_settings.json",
+  "cfg": "C:\\Users\\sy201\\U\\4-1\\C\\DCA1000_radar\\config\\profile_3d.cfg",
+  "adc_sample": 256,
+  "chirp_loops": 32,
+  "tx_num": 3,
+  "rx_num": 4,
+  "virtual_antennas": 12,
+  "remove_static": true,
+  "range_resolution_m": 0.0441,
+  "max_range_m": 11.29,
+  "roi_lateral_m": 1.5,
+  "roi_forward_m": 3.0,
+  "roi_min_forward_m": 0.25,
+  "allow_strongest_fallback": false,
+  "dbscan_adaptive_eps_bands": [
+    {
+      "r_min": 0.25,
+      "r_max": 1.0,
+      "eps": 0.34,
+      "min_samples": 1
+    },
+    {
+      "r_min": 1.0,
+      "r_max": 2.0,
+      "eps": 0.44,
+      "min_samples": 1
+    },
+    {
+      "r_min": 2.0,
+      "r_max": 3.5,
+      "eps": 0.56,
+      "min_samples": 1
+    }
+  ],
+  "track_confirm_hits": 3,
+  "track_max_misses": 4,
+  "track_process_var": 1.0,
+  "track_measurement_var": 0.43,
+  "track_range_measurement_scale": 0.5,
+  "track_confidence_measurement_scale": 0.35,
+  "track_association_gate": 5.99,
+  "track_doppler_zero_guard_bins": 3,
+  "track_doppler_gate_bins": 18,
+  "track_doppler_cost_weight": 0.65,
+  "pipeline_queue_size": 4,
+  "block_track_birth_on_invalid": true,
+  "invalid_policy": {
+    "birth_block_gap_threshold": 16,
+    "birth_block_out_of_sequence_threshold": 2,
+    "birth_block_byte_mismatch_threshold": 2,
+    "drop_gap_threshold": 140,
+    "drop_out_of_sequence_threshold": 6,
+    "drop_byte_mismatch_threshold": 6
+  },
+  "dca_packet_size_bytes": 1472,
+  "dca_packet_delay_us": 100,
+  "show_tentative_tracks": true,
+  "tentative_min_confidence": 0.3,
+  "tentative_min_hits": 2
+}

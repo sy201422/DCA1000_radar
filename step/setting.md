@@ -119,6 +119,21 @@ pip install numpy pyqtgraph PyQt5 PyQt5-sip pyserial PyOpenGL PyOpenGL_accelerat
 - `doppler_cost_weight`
   Doppler 불일치를 association 비용에 얼마나 반영할지 정하는 값
 
+추가로 시각화 관련 설정:
+
+- `visualization.show_tentative_tracks`
+- `visualization.tentative_min_confidence`
+- `visualization.tentative_min_hits`
+
+의미:
+
+- `show_tentative_tracks`
+  confirmed가 되기 전의 강한 tentative track를 보조 표시할지 결정
+- `tentative_min_confidence`
+  어느 정도 강한 tentative만 화면에 보일지 정하는 기준
+- `tentative_min_hits`
+  몇 번 이상 누적된 tentative만 보일지 정하는 기준
+
 ## 6. 현재 cfg 기준
 
 현재 실시간 뷰어는 [profile_3d.cfg](C:\Users\sy201\U\4-1\C\real-time-radar-master\config\profile_3d.cfg)를 사용합니다.

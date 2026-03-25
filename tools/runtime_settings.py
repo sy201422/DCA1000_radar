@@ -75,6 +75,11 @@ DEFAULT_SETTINGS = {
         "point_base_z_m": 0.10,
         "point_confidence_scale_m": 1.10,
     },
+    "visualization": {
+        "show_tentative_tracks": True,
+        "tentative_min_confidence": 0.30,
+        "tentative_min_hits": 2,
+    },
 }
 
 

@@ -125,6 +125,9 @@ SPATIAL_VIEW_HEIGHT = int(SETTINGS['spatial_view']['height'])
 SPATIAL_VIEW_Y = int(SETTINGS['spatial_view']['y'])
 SPATIAL_POINT_BASE_Z_M = float(SETTINGS['spatial_view']['point_base_z_m'])
 SPATIAL_POINT_CONFIDENCE_SCALE_M = float(SETTINGS['spatial_view']['point_confidence_scale_m'])
+SHOW_TENTATIVE_TRACKS = bool(SETTINGS['visualization']['show_tentative_tracks'])
+TENTATIVE_MIN_CONFIDENCE = float(SETTINGS['visualization']['tentative_min_confidence'])
+TENTATIVE_MIN_HITS = int(SETTINGS['visualization']['tentative_min_hits'])
 
 
 def send_cmd(code):
@@ -202,9 +205,13 @@ class MotionViewer:
         self.img_rai = None
         self.rdi_scatter = None
         self.rai_scatter = None
+        self.rdi_tentative_scatter = None
+        self.rai_tentative_scatter = None
         self.gl_view = None
         self.gl_scatter = None
         self.gl_stems = None
+        self.gl_tentative_scatter = None
+        self.gl_tentative_stems = None
         self.spatial_label = None
         self.app = None
         self.main_window = None
@@ -273,6 +280,9 @@ class MotionViewer:
             'invalid_policy': dict(INVALID_POLICY),
             'dca_packet_size_bytes': DCA_PACKET_SIZE_BYTES,
             'dca_packet_delay_us': DCA_PACKET_DELAY_US,
+            'show_tentative_tracks': SHOW_TENTATIVE_TRACKS,
+            'tentative_min_confidence': TENTATIVE_MIN_CONFIDENCE,
+            'tentative_min_hits': TENTATIVE_MIN_HITS,
         }
 
     def prepare_logging(self):
@@ -328,6 +338,7 @@ class MotionViewer:
         tracker_input_count,
         display_tracks,
         tentative_tracks,
+        tentative_display_tracks,
     ):
         if self.status_log_file is None:
             return
@@ -379,9 +390,11 @@ class MotionViewer:
             'tracker_input_count': int(tracker_input_count),
             'display_track_count': len(display_tracks),
             'tentative_track_count': len(tentative_tracks),
+            'tentative_display_track_count': len(tentative_display_tracks),
             'detections': [self.serialize_detection(detection) for detection in detections],
             'display_tracks': [self.serialize_track(track) for track in display_tracks],
             'tentative_tracks': [self.serialize_track(track) for track in tentative_tracks],
+            'tentative_display_tracks': [self.serialize_track(track) for track in tentative_display_tracks],
         }
         self.status_log_file.write(json.dumps(record, ensure_ascii=False) + '\n')
 
@@ -559,9 +572,46 @@ class MotionViewer:
             }
             for track in display_tracks
         ]
+        tentative_display_tracks = []
+        if SHOW_TENTATIVE_TRACKS:
+            confirmed_track_ids = {track.track_id for track in display_tracks}
+            tentative_display_tracks = [
+                track for track in tentative_tracks
+                if track.track_id not in confirmed_track_ids
+                and track.misses == 0
+                and track.hits >= TENTATIVE_MIN_HITS
+                and track.confidence >= TENTATIVE_MIN_CONFIDENCE
+            ]
+            tentative_display_tracks = sorted(
+                tentative_display_tracks,
+                key=lambda track: (track.confidence, track.score, track.hits),
+                reverse=True,
+            )
+
+        tentative_rdi_points = [
+            {
+                'pos': (
+                    self.range_bin_for_track(track) - self.min_range_bin,
+                    track.doppler_bin,
+                ),
+            }
+            for track in tentative_display_tracks
+        ]
+        tentative_rai_points = [
+            {
+                'pos': (
+                    self.range_bin_for_track(track) - self.min_range_bin,
+                    self.runtime_config.angle_fft_size - 1 - self.angle_bin_for_track(track),
+                ),
+            }
+            for track in tentative_display_tracks
+        ]
+
         self.rdi_scatter.setData(rdi_points)
         self.rai_scatter.setData(rai_points)
-        self.update_spatial_view(display_tracks)
+        self.rdi_tentative_scatter.setData(tentative_rdi_points)
+        self.rai_tentative_scatter.setData(tentative_rai_points)
+        self.update_spatial_view(display_tracks, tentative_display_tracks)
 
         integrity_suffix = ''
         if frame_packet.invalid:
@@ -589,11 +639,13 @@ class MotionViewer:
                 f'y={lead_track.y_m:.2f}m'
                 f'{integrity_suffix}'
             )
+            if tentative_display_tracks:
+                status_text += f' | tentative={len(tentative_display_tracks)}'
             self.ui.statusbar.showMessage(status_text)
         else:
             status_text = (
                 'Candidates/Tracks: '
-                f'{tracker_input_count}/0 | tentative={len(tentative_tracks)}'
+                f'{tracker_input_count}/0 | tentative={len(tentative_display_tracks)}'
                 f'{integrity_suffix}'
             )
             self.ui.statusbar.showMessage(status_text)
@@ -608,6 +660,7 @@ class MotionViewer:
             tracker_input_count,
             display_tracks,
             tentative_tracks,
+            tentative_display_tracks,
         )
 
     def range_bin_for_track(self, track):
@@ -629,17 +682,25 @@ class MotionViewer:
             )
         )
 
-    def update_spatial_view(self, display_tracks):
+    def update_spatial_view(self, display_tracks, tentative_display_tracks):
         if not OPENGL_AVAILABLE or self.gl_scatter is None or self.gl_stems is None:
             return
 
-        if not display_tracks:
+        if not display_tracks and not tentative_display_tracks:
             self.gl_scatter.setData(
                 pos=np.zeros((0, 3), dtype=np.float32),
                 color=np.zeros((0, 4), dtype=np.float32),
                 size=np.zeros((0,), dtype=np.float32),
             )
             self.gl_stems.setData(pos=np.zeros((0, 3), dtype=np.float32))
+            if self.gl_tentative_scatter is not None:
+                self.gl_tentative_scatter.setData(
+                    pos=np.zeros((0, 3), dtype=np.float32),
+                    color=np.zeros((0, 4), dtype=np.float32),
+                    size=np.zeros((0,), dtype=np.float32),
+                )
+            if self.gl_tentative_stems is not None:
+                self.gl_tentative_stems.setData(pos=np.zeros((0, 3), dtype=np.float32))
             return
 
         positions = []
@@ -662,14 +723,43 @@ class MotionViewer:
             ])
 
         self.gl_scatter.setData(
-            pos=np.asarray(positions, dtype=np.float32),
-            color=np.asarray(colors, dtype=np.float32),
-            size=np.asarray(sizes, dtype=np.float32),
+            pos=np.asarray(positions, dtype=np.float32) if positions else np.zeros((0, 3), dtype=np.float32),
+            color=np.asarray(colors, dtype=np.float32) if colors else np.zeros((0, 4), dtype=np.float32),
+            size=np.asarray(sizes, dtype=np.float32) if sizes else np.zeros((0,), dtype=np.float32),
         )
         self.gl_stems.setData(
-            pos=np.asarray(stems, dtype=np.float32),
+            pos=np.asarray(stems, dtype=np.float32) if stems else np.zeros((0, 3), dtype=np.float32),
             color=(1.0, 0.45, 0.20, 0.85),
             width=2.0,
+            mode='lines',
+        )
+
+        if self.gl_tentative_scatter is None or self.gl_tentative_stems is None:
+            return
+
+        tentative_positions = []
+        tentative_colors = []
+        tentative_sizes = []
+        tentative_stems = []
+        for track in tentative_display_tracks:
+            z_m = SPATIAL_POINT_BASE_Z_M + (0.75 * SPATIAL_POINT_CONFIDENCE_SCALE_M * float(track.confidence))
+            tentative_positions.append([track.x_m, track.y_m, z_m])
+            tentative_colors.append([1.0, 0.88, 0.25, 0.72])
+            tentative_sizes.append(8.0 + (6.0 * float(track.confidence)))
+            tentative_stems.extend([
+                [track.x_m, track.y_m, 0.0],
+                [track.x_m, track.y_m, z_m],
+            ])
+
+        self.gl_tentative_scatter.setData(
+            pos=np.asarray(tentative_positions, dtype=np.float32) if tentative_positions else np.zeros((0, 3), dtype=np.float32),
+            color=np.asarray(tentative_colors, dtype=np.float32) if tentative_colors else np.zeros((0, 4), dtype=np.float32),
+            size=np.asarray(tentative_sizes, dtype=np.float32) if tentative_sizes else np.zeros((0,), dtype=np.float32),
+        )
+        self.gl_tentative_stems.setData(
+            pos=np.asarray(tentative_stems, dtype=np.float32) if tentative_stems else np.zeros((0, 3), dtype=np.float32),
+            color=(1.0, 0.88, 0.25, 0.65),
+            width=1.5,
             mode='lines',
         )
 
@@ -741,8 +831,22 @@ class MotionViewer:
                 color=np.zeros((0, 4), dtype=np.float32),
                 size=np.zeros((0,), dtype=np.float32),
             )
+            self.gl_tentative_stems = gl.GLLinePlotItem(
+                pos=np.zeros((0, 3), dtype=np.float32),
+                color=(1.0, 0.88, 0.25, 0.65),
+                width=1.5,
+                antialias=True,
+                mode='lines',
+            )
+            self.gl_tentative_scatter = gl.GLScatterPlotItem(
+                pos=np.zeros((0, 3), dtype=np.float32),
+                color=np.zeros((0, 4), dtype=np.float32),
+                size=np.zeros((0,), dtype=np.float32),
+            )
             self.gl_view.addItem(self.gl_stems)
             self.gl_view.addItem(self.gl_scatter)
+            self.gl_view.addItem(self.gl_tentative_stems)
+            self.gl_view.addItem(self.gl_tentative_scatter)
         else:
             self.spatial_label.setText('3D Spatial View (OpenGL unavailable)')
 
@@ -766,11 +870,23 @@ class MotionViewer:
             brush=pg.mkBrush(0, 0, 0, 0),
             size=14,
         )
+        self.rdi_tentative_scatter = pg.ScatterPlotItem(
+            pen=pg.mkPen(255, 205, 64, width=1.5),
+            brush=pg.mkBrush(0, 0, 0, 0),
+            size=11,
+        )
+        self.rai_tentative_scatter = pg.ScatterPlotItem(
+            pen=pg.mkPen(255, 205, 64, width=1.5),
+            brush=pg.mkBrush(0, 0, 0, 0),
+            size=11,
+        )
         lookup_table = self.build_lookup_table()
         self.img_rdi.setLookupTable(lookup_table)
         self.img_rai.setLookupTable(lookup_table)
         view_rdi.addItem(self.img_rdi)
         view_rai.addItem(self.img_rai)
+        view_rdi.addItem(self.rdi_tentative_scatter)
+        view_rai.addItem(self.rai_tentative_scatter)
         view_rdi.addItem(self.rdi_scatter)
         view_rai.addItem(self.rai_scatter)
         view_rdi.setRange(

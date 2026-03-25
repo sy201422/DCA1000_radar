@@ -33,6 +33,8 @@
   설정을 JSON으로 분리하고 invalid frame 정책을 경미/심각 단계로 나눔
 - `11_doppler_consistency_and_association.md`
   Doppler 일관성을 association 비용에 반영해 다인원과 원거리 안정성 개선
+- `12_multitarget_display_and_tentative_overlay.md`
+  강한 tentative track를 보조 표시해 다인원 상황을 더 빨리 확인하도록 개선
 - `setting.md`
   다른 사람이 실행할 때 필요한 설치와 환경 설정 가이드
 
