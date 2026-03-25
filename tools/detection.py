@@ -11,6 +11,7 @@ class DetectionRegion:
     forward_limit_m: float
     min_forward_m: float = 0.0
     max_targets: int = 6
+    allow_strongest_fallback: bool = False
     adaptive_eps_bands: object = None
     cluster_min_samples: int = 1
     cluster_velocity_weight: float = 0.0
@@ -252,9 +253,12 @@ def detect_targets(
     peak_mask = (power_map > threshold_map) & _local_maxima_mask(power_map)
     candidate_indices = np.argwhere(peak_mask)
 
-    if candidate_indices.size == 0:
+    if candidate_indices.size == 0 and detection_region.allow_strongest_fallback:
         strongest_index = np.unravel_index(np.argmax(power_map), power_map.shape)
         candidate_indices = np.array([strongest_index])
+
+    if candidate_indices.size == 0:
+        return []
 
     candidate_scores = power_map[candidate_indices[:, 0], candidate_indices[:, 1]]
     ordered_indices = candidate_indices[np.argsort(candidate_scores)[::-1]]

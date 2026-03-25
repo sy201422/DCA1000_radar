@@ -1,35 +1,36 @@
-# 06. Current Status And Next Steps
+# 06. 당시 상태 평가와 다음 방향
 
-현재 상태 평가:
-- `IWR6843ISK-ODS + DCA1000` 실시간 입력은 동작한다.
-- `3TX / 4RX / 12 virtual antenna` 처리도 동작한다.
-- `RDI / RAI` 기반 후보 검출은 동작한다.
-- `adaptive DBSCAN`으로 같은 사람 주변 후보를 줄이는 효과가 있다.
-- `Kalman + Hungarian` 이후 lead target 유지도 초반보다 좋아졌다.
-- 거리 측정 안정성은 이전보다 더 좋아졌다고 볼 수 있다.
+## 당시 중간 평가
 
-아직 남아 있는 문제:
-- track가 완전히 없어지는 것보다 `잠깐 숨는` 경우
-- 낮은 confidence의 tentative track가 오래 남는 경우
-- 원거리에서 생기는 multipath성 후보
+여기까지 진행했을 때 얻은 결론은 아래와 같았습니다.
 
-왜 이런 현상이 남는가:
-- 실내 환경의 clutter와 multipath는 완전히 사라지지 않는다.
-- ODS의 넓은 시야각 때문에 angle spread와 근거리 leakage가 잘 보인다.
-- DBSCAN과 Kalman이 많이 줄여주지만, `false candidate 0개`는 현실적으로 어렵다.
+좋아진 점:
+- `IWR6843ISK-ODS + DCA1000` 실시간 입력이 실제로 동작
+- `3TX / 4RX / 12 virtual antenna` 처리 연결
+- RDI / RAI 기반 후보 검출 동작
+- DBSCAN으로 같은 사람 주변 후보를 어느 정도 줄임
+- Kalman 추적으로 단순 표시보다 continuity가 개선
 
-현재 권장 다음 단계:
-- `association_gate` 미세 조정
-  재매칭 실패를 조금 줄이기
-- `confirmed -> LOST` 전환 지연
-  한 프레임 mismatch에 덜 민감하게 만들기
-- tentative track pruning 강화
-  낮은 confidence에서 오래 남는 tentative track 정리
-- 로그 분석 스크립트 추가
-  세션별 `lead continuity`, `drop rate`, `false tentative rate` 자동 요약
+아직 남아 있던 문제:
+- track가 갑자기 사라지거나 숨는 현상
+- tentative track가 길게 남는 현상
+- 장소가 바뀌면 multipath와 clutter가 크게 달라지는 문제
+- 다중 인원에서는 후보는 나오지만 display track가 적게 유지되는 문제
 
-중장기 다음 단계:
-- 진짜 point cloud 기반 multi-person tracking
-- elevation 또는 pseudo-height가 아닌 실제 3D 추정
-- 사람 단위 ID 유지 최적화
-- 오프라인 재생 데이터셋 기반 파라미터 튜닝 자동화
+## 왜 이후 방향이 바뀌었는가
+
+초기에는 detection / DBSCAN / Kalman 파라미터를 더 만지는 쪽으로 가려고 했지만,  
+로그를 보기 시작하면서 “문제의 핵심이 알고리즘보다 파이프라인 무결성에 있다”는 점이 더 분명해졌습니다.
+
+대표 징후:
+- candidate는 있는데 display가 0인 프레임이 많음
+- UI timing이 tracker에 섞임
+- UDP packet 상태를 전혀 모른 채 추적만 튜닝하고 있었음
+
+그래서 이후 단계에서는:
+- packet header 파싱
+- frame metadata 추가
+- capture timebase 사용
+- invalid frame 정책
+
+같은 구조 쪽 작업을 우선하기로 했습니다.

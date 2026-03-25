@@ -1,50 +1,57 @@
-# 04. Kalman And Stability
+# 04. Kalman 추적기와 안정성 조정
 
-문제:
-- DBSCAN 뒤에도 원거리 false candidate와 track 끊김이 남았다.
-- 단순 nearest-neighbor tracker만으로는 여러 사람과 일시적 미검출에 약했다.
+## 왜 Kalman이 필요했는가
 
-주요 변경 파일:
+DBSCAN까지 넣어도 후보는 여전히 프레임마다 조금씩 튑니다.  
+이 상태로는 사람이 움직일 때 좌표가 들쭉날쭉하고, 잠깐 detection이 약해질 때 바로 사라지는 문제가 생깁니다.
+
+그래서 `Kalman + Hungarian` 기반 다중 추적기를 추가했습니다.
+
+## 주요 파일
+
 - `tools/tracking.py`
-- `real-time/live_motion_viewer.py`
 
-적용 사항:
-- 기존 단순 tracker를 `Kalman + Hungarian assignment` 기반 tracker로 교체
-- 상태 관리 추가
-  `TENTATIVE`, `CONFIRMED`, `LOST`
-- prediction/update 구조 추가
-  잠깐 detection이 비어도 track를 이어가도록 함
-- distance만 보지 않고 measurement 신뢰도에 따라 필터 반응 조정
+## 현재 tracker의 특징
 
-현재 주요 tracking 파라미터:
-- `track_confirm_hits = 3`
-- `track_max_misses = 4`
-- `track_process_var = 1.0`
-- `track_measurement_var = 0.43`
-- `track_range_measurement_scale = 0.50`
-- `track_confidence_measurement_scale = 0.35`
-- `track_association_gate = 5.99`
-- `track_report_miss_tolerance = 1`
+현재 tracker는 단순 nearest-neighbor가 아니라 아래 요소를 갖고 있습니다.
 
-range/confidence measurement weighting 의미:
-- 멀수록 측정 오차가 크다고 보고 덜 믿음
-- score/confidence가 높을수록 더 빨리 따라감
-- 약하고 먼 후보는 더 보수적으로 반영
+- Kalman filter
+- Hungarian assignment
+- `TENTATIVE / CONFIRMED / LOST` 상태
+- Mahalanobis gating
+- range / confidence 기반 measurement covariance 조절
 
-로그 분석으로 본 현재 끊김 원인:
-- detection이 아예 없는 프레임보다
-  detection은 있는데 display track이 잠깐 0이 되는 경우가 더 많았다
-- 즉 끊김의 큰 원인은
-  `필터가 없음`보다 `association / state transition / display cutoff`였다
+이 덕분에:
+- 좌표가 조금 더 부드럽게 이어지고
+- 잠깐 detection이 끊겨도 바로 track이 죽지 않으며
+- 다중 후보 중 같은 객체를 이어붙일 수 있게 되었습니다
 
-실제 확인된 패턴:
-- `display_track_count == 0` 프레임이 존재하지만 그 대부분에서 candidate는 계속 있었다
-- tentative인데 hits가 많이 쌓인 track도 여러 번 보였다
-- 이는 track가 완전히 사라진 게 아니라, 상태 전환과 표시 조건이 너무 엄격하다는 뜻이다
+## 튜닝하면서 본 trade-off
 
-현재 완화한 부분:
-- 화면 표시 조건을 `misses == 0`에서 `misses <= report_miss_tolerance`로 완화
+### `confirm hits`
 
-현재 평가:
-- 거리 추정 자체는 초반보다 좋아졌다
-- 아직 남은 문제는 track continuity와 false tentative track 관리다
+너무 낮으면:
+- noise가 쉽게 confirmed track가 됨
+
+너무 높으면:
+- 실제 사람도 늦게 붙거나 놓칠 수 있음
+
+### measurement 신뢰도
+
+멀수록 angle 오차가 커지고 좌표 흔들림이 커집니다.  
+그래서 range와 confidence에 따라 measurement를 덜 믿도록 조정했습니다.
+
+### 근거리 / 원거리 분리 조정
+
+DBSCAN과 tracker를 같이 조정하면서:
+- 근거리 후보 중복은 줄이고
+- 원거리 candidate는 너무 쉽게 하나로 합쳐지지 않게 조정했습니다
+
+## 당시 남아 있던 문제
+
+이 단계에서 보였던 대표 문제:
+- track가 잠깐 숨는 현상
+- multipath로 생긴 후보가 tentative로 오래 남는 현상
+- 장소가 바뀌면 tuning이 흔들리는 현상
+
+즉 tracker 자체는 붙었지만, 이후에는 detection보다 파이프라인 무결성과 timebase 문제가 더 중요해졌습니다.

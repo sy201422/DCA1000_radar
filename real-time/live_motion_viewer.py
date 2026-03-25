@@ -7,6 +7,7 @@ import socket
 import sys
 import time
 from datetime import datetime
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -73,48 +74,57 @@ from radar_runtime import (
     radial_bin_limit,
 )
 from real_time_process import DataProcessor, UdpListener
+from runtime_settings import load_runtime_settings
 from tracking import MultiTargetTracker
 
 
-CONFIG_PATH = Path(
-    PROJECT_ROOT / 'config' / 'profile_3d.cfg'
-)
-CLI_PORT = 'COM5'
-CLI_BAUDRATE = 115200
-HOST_IP = '192.168.33.30'
-DATA_PORT = 4098
-CONFIG_PORT = 4096
-FPGA_IP = '192.168.33.180'
-FPGA_PORT = 4096
-BUFFER_SIZE = 2097152
-REMOVE_STATIC = True
-DOPPLER_GUARD_BINS = 2
-ROI_LATERAL_M = 1.5
-ROI_FORWARD_M = 3.0
-ROI_MIN_FORWARD_M = 0.25
-TRACK_CONFIRM_HITS = 3
-TRACK_MAX_MISSES = 4
-TRACK_PROCESS_VAR = 1.0
-TRACK_MEASUREMENT_VAR = 0.43
-TRACK_RANGE_MEASUREMENT_SCALE = 0.50
-TRACK_CONFIDENCE_MEASUREMENT_SCALE = 0.35
-TRACK_ASSOCIATION_GATE = 5.99
-TRACK_REPORT_MISS_TOLERANCE = 1
-TRACK_LOST_GATE_FACTOR = 1.3
-TRACK_TENTATIVE_GATE_FACTOR = 0.65
-DISPLAY_MIN_CONFIDENCE = 0.22
-DBSCAN_ADAPTIVE_EPS_BANDS = (
-    {'r_min': ROI_MIN_FORWARD_M, 'r_max': 1.0, 'eps': 0.34, 'min_samples': 1},
-    {'r_min': 1.0, 'r_max': 2.0, 'eps': 0.44, 'min_samples': 1},
-    {'r_min': 2.0, 'r_max': 3.5, 'eps': 0.56, 'min_samples': 1},
-)
-DBSCAN_CLUSTER_MIN_SAMPLES = 1
-DBSCAN_CLUSTER_VELOCITY_WEIGHT = 0.0
+SETTINGS = load_runtime_settings(PROJECT_ROOT)
+SETTINGS_PATH = Path(SETTINGS['_settings_path'])
+CONFIG_PATH = Path(SETTINGS['_config_path_resolved'])
+CLI_PORT = SETTINGS['cli_port']
+CLI_BAUDRATE = int(SETTINGS['cli_baudrate'])
+HOST_IP = SETTINGS['network']['host_ip']
+DATA_PORT = int(SETTINGS['network']['data_port'])
+CONFIG_PORT = int(SETTINGS['network']['config_port'])
+FPGA_IP = SETTINGS['network']['fpga_ip']
+FPGA_PORT = int(SETTINGS['network']['fpga_port'])
+BUFFER_SIZE = int(SETTINGS['network']['buffer_size'])
+REMOVE_STATIC = bool(SETTINGS['processing']['remove_static'])
+DOPPLER_GUARD_BINS = int(SETTINGS['processing']['doppler_guard_bins'])
+ROI_LATERAL_M = float(SETTINGS['roi']['lateral_m'])
+ROI_FORWARD_M = float(SETTINGS['roi']['forward_m'])
+ROI_MIN_FORWARD_M = float(SETTINGS['roi']['min_forward_m'])
+ALLOW_STRONGEST_FALLBACK = bool(SETTINGS['detection']['allow_strongest_fallback'])
+TRACK_CONFIRM_HITS = int(SETTINGS['tracking']['confirm_hits'])
+TRACK_MAX_MISSES = int(SETTINGS['tracking']['max_misses'])
+TRACK_PROCESS_VAR = float(SETTINGS['tracking']['process_var'])
+TRACK_MEASUREMENT_VAR = float(SETTINGS['tracking']['measurement_var'])
+TRACK_RANGE_MEASUREMENT_SCALE = float(SETTINGS['tracking']['range_measurement_scale'])
+TRACK_CONFIDENCE_MEASUREMENT_SCALE = float(SETTINGS['tracking']['confidence_measurement_scale'])
+TRACK_ASSOCIATION_GATE = float(SETTINGS['tracking']['association_gate'])
+TRACK_DOPPLER_ZERO_GUARD_BINS = int(SETTINGS['tracking']['doppler_zero_guard_bins'])
+TRACK_DOPPLER_GATE_BINS = int(SETTINGS['tracking']['doppler_gate_bins'])
+TRACK_DOPPLER_COST_WEIGHT = float(SETTINGS['tracking']['doppler_cost_weight'])
+TRACK_REPORT_MISS_TOLERANCE = int(SETTINGS['tracking']['report_miss_tolerance'])
+TRACK_LOST_GATE_FACTOR = float(SETTINGS['tracking']['lost_gate_factor'])
+TRACK_TENTATIVE_GATE_FACTOR = float(SETTINGS['tracking']['tentative_gate_factor'])
+DISPLAY_MIN_CONFIDENCE = float(SETTINGS['detection']['display_min_confidence'])
+PIPELINE_QUEUE_SIZE = int(SETTINGS['pipeline']['queue_size'])
+BLOCK_TRACK_BIRTH_ON_INVALID = bool(SETTINGS['pipeline']['block_track_birth_on_invalid'])
+INVALID_POLICY = SETTINGS['pipeline']['invalid_policy']
+DCA_CONFIG_TIMEOUT_S = float(SETTINGS['dca']['config_timeout_s'])
+DCA_PACKET_SIZE_BYTES = int(SETTINGS['dca']['packet_size_bytes'])
+DCA_PACKET_DELAY_US = int(SETTINGS['dca']['packet_delay_us'])
+DCA_PACKET_DELAY_TICKS_PER_US = int(SETTINGS['dca']['packet_delay_ticks_per_us'])
+DBSCAN_ADAPTIVE_EPS_BANDS = tuple(SETTINGS['detection']['dbscan_adaptive_eps_bands'])
+DBSCAN_CLUSTER_MIN_SAMPLES = int(SETTINGS['detection']['cluster_min_samples'])
+DBSCAN_CLUSTER_VELOCITY_WEIGHT = float(SETTINGS['detection']['cluster_velocity_weight'])
+DETECTION_MAX_TARGETS = int(SETTINGS['detection']['max_targets'])
 LOG_ROOT = PROJECT_ROOT / 'logs' / 'live_motion_viewer'
-SPATIAL_VIEW_HEIGHT = 180
-SPATIAL_VIEW_Y = 42
-SPATIAL_POINT_BASE_Z_M = 0.10
-SPATIAL_POINT_CONFIDENCE_SCALE_M = 1.10
+SPATIAL_VIEW_HEIGHT = int(SETTINGS['spatial_view']['height'])
+SPATIAL_VIEW_Y = int(SETTINGS['spatial_view']['y'])
+SPATIAL_POINT_BASE_Z_M = float(SETTINGS['spatial_view']['point_base_z_m'])
+SPATIAL_POINT_CONFIDENCE_SCALE_M = float(SETTINGS['spatial_view']['point_confidence_scale_m'])
 
 
 def send_cmd(code):
@@ -122,9 +132,8 @@ def send_cmd(code):
         '3': (0x03).to_bytes(2, byteorder='little', signed=False),
         '5': (0x05).to_bytes(2, byteorder='little', signed=False),
         '6': (0x06).to_bytes(2, byteorder='little', signed=False),
-        '9': (0x09).to_bytes(2, byteorder='little', signed=False),
         'B': (0x0B).to_bytes(2, byteorder='little', signed=False),
-        'E': (0x0E).to_bytes(2, byteorder='little', signed=False),
+        '9': (0x09).to_bytes(2, byteorder='little', signed=False),
     }
     if code not in code_map:
         raise ValueError(f'Unsupported DCA1000 command code: {code}')
@@ -134,15 +143,46 @@ def send_cmd(code):
     data_size_0 = (0x00).to_bytes(2, byteorder='little', signed=False)
     data_size_6 = (0x06).to_bytes(2, byteorder='little', signed=False)
     data_fpga_config = (0x01020102031e).to_bytes(6, byteorder='big', signed=False)
-    data_packet_config = (0xc005350c0000).to_bytes(6, byteorder='big', signed=False)
+    packet_delay_ticks = int(DCA_PACKET_DELAY_US * DCA_PACKET_DELAY_TICKS_PER_US)
+    data_packet_config = (
+        int(DCA_PACKET_SIZE_BYTES).to_bytes(2, byteorder='little', signed=False)
+        + int(packet_delay_ticks).to_bytes(2, byteorder='little', signed=False)
+        + (0).to_bytes(2, byteorder='little', signed=False)
+    )
 
-    if code in ('9', 'E', '5', '6'):
+    if code in ('9', '5', '6'):
         return header + code_map[code] + data_size_0 + footer
 
     if code == '3':
         return header + code_map[code] + data_size_6 + data_fpga_config + footer
 
     return header + code_map[code] + data_size_6 + data_packet_config + footer
+
+
+@dataclass(frozen=True)
+class DcaResponse:
+    command_code: int
+    status: int
+    payload: bytes
+
+
+def parse_dca_response(response_bytes):
+    if len(response_bytes) < 8:
+        raise RuntimeError(f'DCA1000 response too short: {len(response_bytes)} bytes')
+
+    header = int.from_bytes(response_bytes[:2], byteorder='little', signed=False)
+    command_code = int.from_bytes(response_bytes[2:4], byteorder='little', signed=False)
+    status = int.from_bytes(response_bytes[4:6], byteorder='little', signed=False)
+    footer = int.from_bytes(response_bytes[-2:], byteorder='little', signed=False)
+
+    if header != 0xA55A or footer != 0xEEAA:
+        raise RuntimeError(
+            'Invalid DCA1000 response packet '
+            f'(header=0x{header:04X}, footer=0x{footer:04X})'
+        )
+
+    payload = response_bytes[6:-2]
+    return DcaResponse(command_code=command_code, status=status, payload=payload)
 
 
 class MotionViewer:
@@ -152,10 +192,8 @@ class MotionViewer:
             remove_static=REMOVE_STATIC,
             doppler_guard_bins=DOPPLER_GUARD_BINS,
         )
-        self.bin_queue = Queue()
-        self.rdi_queue = Queue()
-        self.rai_queue = Queue()
-        self.detection_queue = Queue()
+        self.raw_frame_queue = Queue(maxsize=PIPELINE_QUEUE_SIZE)
+        self.processed_frame_queue = Queue(maxsize=PIPELINE_QUEUE_SIZE)
         self.radar_ctrl = None
         self.sock_config = None
         self.collector = None
@@ -176,6 +214,7 @@ class MotionViewer:
         self.stream_started_at = None
         self.first_image_logged = False
         self.frame_index = 0
+        self.skipped_render_frames = 0
         self.log_root = LOG_ROOT
         self.session_dir = self.log_root / datetime.now().strftime('%Y%m%d_%H%M%S')
         self.status_log_path = self.session_dir / 'status_log.jsonl'
@@ -194,27 +233,17 @@ class MotionViewer:
             lateral_limit_m=ROI_LATERAL_M,
             forward_limit_m=ROI_FORWARD_M,
             min_forward_m=ROI_MIN_FORWARD_M,
-            max_targets=6,
+            max_targets=DETECTION_MAX_TARGETS,
+            allow_strongest_fallback=ALLOW_STRONGEST_FALLBACK,
             adaptive_eps_bands=DBSCAN_ADAPTIVE_EPS_BANDS,
             cluster_min_samples=DBSCAN_CLUSTER_MIN_SAMPLES,
             cluster_velocity_weight=DBSCAN_CLUSTER_VELOCITY_WEIGHT,
-        )
-        self.tracker = MultiTargetTracker(
-            process_var=TRACK_PROCESS_VAR,
-            measurement_var=TRACK_MEASUREMENT_VAR,
-            range_measurement_scale=TRACK_RANGE_MEASUREMENT_SCALE,
-            confidence_measurement_scale=TRACK_CONFIDENCE_MEASUREMENT_SCALE,
-            association_gate=TRACK_ASSOCIATION_GATE,
-            min_confirmed_hits=TRACK_CONFIRM_HITS,
-            max_missed_frames=TRACK_MAX_MISSES,
-            report_miss_tolerance=TRACK_REPORT_MISS_TOLERANCE,
-            lost_gate_factor=TRACK_LOST_GATE_FACTOR,
-            tentative_gate_factor=TRACK_TENTATIVE_GATE_FACTOR,
         )
         self.prepare_logging()
 
     def runtime_summary(self):
         return {
+            'settings_path': str(SETTINGS_PATH),
             'cfg': str(CONFIG_PATH),
             'adc_sample': self.runtime_config.adc_sample,
             'chirp_loops': self.runtime_config.chirp_loops,
@@ -227,6 +256,7 @@ class MotionViewer:
             'roi_lateral_m': ROI_LATERAL_M,
             'roi_forward_m': ROI_FORWARD_M,
             'roi_min_forward_m': ROI_MIN_FORWARD_M,
+            'allow_strongest_fallback': ALLOW_STRONGEST_FALLBACK,
             'dbscan_adaptive_eps_bands': list(DBSCAN_ADAPTIVE_EPS_BANDS),
             'track_confirm_hits': TRACK_CONFIRM_HITS,
             'track_max_misses': TRACK_MAX_MISSES,
@@ -235,6 +265,14 @@ class MotionViewer:
             'track_range_measurement_scale': TRACK_RANGE_MEASUREMENT_SCALE,
             'track_confidence_measurement_scale': TRACK_CONFIDENCE_MEASUREMENT_SCALE,
             'track_association_gate': TRACK_ASSOCIATION_GATE,
+            'track_doppler_zero_guard_bins': TRACK_DOPPLER_ZERO_GUARD_BINS,
+            'track_doppler_gate_bins': TRACK_DOPPLER_GATE_BINS,
+            'track_doppler_cost_weight': TRACK_DOPPLER_COST_WEIGHT,
+            'pipeline_queue_size': PIPELINE_QUEUE_SIZE,
+            'block_track_birth_on_invalid': BLOCK_TRACK_BIRTH_ON_INVALID,
+            'invalid_policy': dict(INVALID_POLICY),
+            'dca_packet_size_bytes': DCA_PACKET_SIZE_BYTES,
+            'dca_packet_delay_us': DCA_PACKET_DELAY_US,
         }
 
     def prepare_logging(self):
@@ -280,20 +318,65 @@ class MotionViewer:
             'misses': int(track.misses),
         }
 
-    def log_status_snapshot(self, status_text, frame_ts, detections, display_tracks, tentative_tracks):
+    def log_status_snapshot(
+        self,
+        status_text,
+        frame_packet,
+        render_ts,
+        skipped_frames,
+        detections,
+        tracker_input_count,
+        display_tracks,
+        tentative_tracks,
+    ):
         if self.status_log_file is None:
             return
 
         elapsed_s = None
         if self.stream_started_at is not None:
-            elapsed_s = max(frame_ts - self.stream_started_at, 0.0)
+            elapsed_s = max(frame_packet.capture_ts - self.stream_started_at, 0.0)
+
+        capture_to_process_ms = None
+        process_to_render_ms = None
+        capture_to_render_ms = max((render_ts - frame_packet.capture_ts) * 1000.0, 0.0)
+        if frame_packet.processed_ts is not None:
+            capture_to_process_ms = max(
+                (frame_packet.processed_ts - frame_packet.capture_ts) * 1000.0,
+                0.0,
+            )
+            process_to_render_ms = max(
+                (render_ts - frame_packet.processed_ts) * 1000.0,
+                0.0,
+            )
 
         record = {
             'frame_index': self.frame_index,
+            'frame_id': int(frame_packet.frame_id),
             'wall_time': datetime.now().isoformat(timespec='milliseconds'),
             'elapsed_s': None if elapsed_s is None else round(elapsed_s, 4),
+            'capture_ts': round(frame_packet.capture_ts, 6),
+            'assembled_ts': round(frame_packet.assembled_ts, 6),
+            'processed_ts': None if frame_packet.processed_ts is None else round(frame_packet.processed_ts, 6),
+            'render_ts': round(render_ts, 6),
+            'capture_to_process_ms': None if capture_to_process_ms is None else round(capture_to_process_ms, 3),
+            'process_to_render_ms': None if process_to_render_ms is None else round(process_to_render_ms, 3),
+            'capture_to_render_ms': round(capture_to_render_ms, 3),
+            'packets_in_frame': int(frame_packet.packets_in_frame),
+            'sequence_start': frame_packet.sequence_start,
+            'sequence_end': frame_packet.sequence_end,
+            'byte_count_start': frame_packet.byte_count_start,
+            'byte_count_end': frame_packet.byte_count_end,
+            'udp_gap_count': int(frame_packet.udp_gap_count),
+            'byte_mismatch_count': int(frame_packet.byte_mismatch_count),
+            'out_of_sequence_count': int(frame_packet.out_of_sequence_count),
+            'invalid': bool(frame_packet.invalid),
+            'invalid_reason': frame_packet.invalid_reason,
+            'track_birth_blocked': bool(frame_packet.track_birth_blocked),
+            'tracker_policy': frame_packet.tracker_policy,
+            'skipped_render_frames': int(skipped_frames),
             'status_text': status_text,
             'candidate_count': len(detections),
+            'tracker_input_count': int(tracker_input_count),
             'display_track_count': len(display_tracks),
             'tentative_track_count': len(tentative_tracks),
             'detections': [self.serialize_detection(detection) for detection in detections],
@@ -307,17 +390,35 @@ class MotionViewer:
         fpga_address = (FPGA_IP, FPGA_PORT)
         self.sock_config = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock_config.bind(config_address)
+        self.sock_config.settimeout(DCA_CONFIG_TIMEOUT_S)
 
-        for command in ('9', 'E', '3', 'B', '5'):
-            self.sock_config.sendto(send_cmd(command), fpga_address)
-            time.sleep(0.1)
-            self.sock_config.recvfrom(2048)
+        for command in ('9', '3', 'B', '5'):
+            self.send_dca_command(command, fpga_address)
+
+    def send_dca_command(self, command, fpga_address):
+        expected_command_code = int(command, 16)
+        self.sock_config.sendto(send_cmd(command), fpga_address)
+        response_bytes, _ = self.sock_config.recvfrom(2048)
+        response = parse_dca_response(response_bytes)
+
+        if response.command_code != expected_command_code:
+            raise RuntimeError(
+                f'DCA1000 response command mismatch for 0x{expected_command_code:02X}: '
+                f'got 0x{response.command_code:02X}'
+            )
+        if response.status != 0:
+            raise RuntimeError(
+                f'DCA1000 command 0x{expected_command_code:02X} failed '
+                f'with status 0x{response.status:04X}'
+            )
+        time.sleep(0.05)
+        return response
 
     def start_workers(self):
         data_address = (HOST_IP, DATA_PORT)
         self.collector = UdpListener(
             'Listener',
-            self.bin_queue,
+            self.raw_frame_queue,
             self.runtime_config.frame_length,
             data_address,
             BUFFER_SIZE,
@@ -325,13 +426,29 @@ class MotionViewer:
         self.processor = DataProcessor(
             'Processor',
             self.runtime_config,
-            self.bin_queue,
-            self.rdi_queue,
-            self.rai_queue,
-            self.detection_queue,
+            self.raw_frame_queue,
+            self.processed_frame_queue,
             self.detection_region,
             self.min_range_bin,
             self.max_range_bin,
+            MultiTargetTracker(
+                process_var=TRACK_PROCESS_VAR,
+                measurement_var=TRACK_MEASUREMENT_VAR,
+                range_measurement_scale=TRACK_RANGE_MEASUREMENT_SCALE,
+                confidence_measurement_scale=TRACK_CONFIDENCE_MEASUREMENT_SCALE,
+                association_gate=TRACK_ASSOCIATION_GATE,
+                doppler_center_bin=self.runtime_config.doppler_fft_size // 2,
+                doppler_zero_guard_bins=TRACK_DOPPLER_ZERO_GUARD_BINS,
+                doppler_gate_bins=TRACK_DOPPLER_GATE_BINS,
+                doppler_cost_weight=TRACK_DOPPLER_COST_WEIGHT,
+                min_confirmed_hits=TRACK_CONFIRM_HITS,
+                max_missed_frames=TRACK_MAX_MISSES,
+                report_miss_tolerance=TRACK_REPORT_MISS_TOLERANCE,
+                lost_gate_factor=TRACK_LOST_GATE_FACTOR,
+                tentative_gate_factor=TRACK_TENTATIVE_GATE_FACTOR,
+            ),
+            block_track_birth_on_invalid=BLOCK_TRACK_BIRTH_ON_INVALID,
+            invalid_policy=INVALID_POLICY,
         )
         self.collector.daemon = True
         self.processor.daemon = True
@@ -349,12 +466,25 @@ class MotionViewer:
         self.stream_started_at = time.perf_counter()
         self.waiting_for_data_logged = False
         self.first_image_logged = False
+        self.frame_index = 0
+        self.skipped_render_frames = 0
         self.update_figure()
+
+    def pull_latest_processed_frame(self):
+        frame_packet = self.processed_frame_queue.get_nowait()
+        skipped_frames = 0
+        while True:
+            try:
+                frame_packet = self.processed_frame_queue.get_nowait()
+                skipped_frames += 1
+            except Empty:
+                break
+        self.skipped_render_frames += skipped_frames
+        return frame_packet, skipped_frames
 
     def update_figure(self):
         try:
-            rdi = self.rdi_queue.get_nowait()
-            rai = self.rai_queue.get_nowait()
+            frame_packet, skipped_frames = self.pull_latest_processed_frame()
         except Empty:
             if (
                 self.stream_started_at is not None
@@ -370,10 +500,12 @@ class MotionViewer:
             QtCore.QTimer.singleShot(20, self.update_figure)
             return
 
-        try:
-            detections = self.detection_queue.get_nowait()
-        except Empty:
-            detections = []
+        rdi = frame_packet.rdi
+        rai = frame_packet.rai
+        detections = list(frame_packet.detections)
+        if rdi is None or rai is None:
+            QtCore.QTimer.singleShot(5, self.update_figure)
+            return
 
         if not self.first_image_logged:
             print("Displaying first processed frame")
@@ -390,13 +522,15 @@ class MotionViewer:
 
         self.img_rdi.setImage(cropped_rdi.T, axisOrder='row-major')
         self.img_rai.setImage(np.flipud(roi_rai.T), axisOrder='row-major')
-        now = time.perf_counter()
-        self.update_detection_overlay(detections, now)
-        self.update_time = now
+        render_ts = time.perf_counter()
+        self.update_detection_overlay(frame_packet, detections, render_ts, skipped_frames)
+        self.update_time = render_ts
         QtCore.QTimer.singleShot(1, self.update_figure)
 
-    def update_detection_overlay(self, detections, frame_ts):
-        confirmed_tracks, tentative_tracks = self.tracker.update(detections, frame_ts=frame_ts)
+    def update_detection_overlay(self, frame_packet, detections, render_ts, skipped_frames):
+        tracker_input_count = int(frame_packet.tracker_input_count)
+        confirmed_tracks = list(frame_packet.confirmed_tracks)
+        tentative_tracks = list(frame_packet.tentative_tracks)
         display_tracks = [
             track for track in confirmed_tracks
             if track.misses <= TRACK_REPORT_MISS_TOLERANCE
@@ -429,30 +563,49 @@ class MotionViewer:
         self.rai_scatter.setData(rai_points)
         self.update_spatial_view(display_tracks)
 
+        integrity_suffix = ''
+        if frame_packet.invalid:
+            integrity_suffix = (
+                f' | invalid gaps={frame_packet.udp_gap_count} '
+                f'seq={frame_packet.out_of_sequence_count} '
+                f'byte={frame_packet.byte_mismatch_count}'
+            )
+            if frame_packet.track_birth_blocked:
+                integrity_suffix += ' births=off'
+            if frame_packet.tracker_policy == 'drop':
+                integrity_suffix += ' tracker=drop'
+        elif skipped_frames:
+            integrity_suffix = f' | skipped={skipped_frames}'
+
         if display_tracks:
             lead_track = display_tracks[0]
             status_text = (
                 'Candidates/Tracks: '
-                f'{len(detections)}/{len(display_tracks)} | lead '
+                f'{tracker_input_count}/{len(display_tracks)} | lead '
                 f'id={lead_track.track_id} '
                 f'r={lead_track.range_m:.2f}m '
                 f'angle={lead_track.angle_deg:.1f}deg '
                 f'x={lead_track.x_m:.2f}m '
                 f'y={lead_track.y_m:.2f}m'
+                f'{integrity_suffix}'
             )
             self.ui.statusbar.showMessage(status_text)
         else:
             status_text = (
                 'Candidates/Tracks: '
-                f'{len(detections)}/0 | tentative={len(tentative_tracks)}'
+                f'{tracker_input_count}/0 | tentative={len(tentative_tracks)}'
+                f'{integrity_suffix}'
             )
             self.ui.statusbar.showMessage(status_text)
 
         self.frame_index += 1
         self.log_status_snapshot(
             status_text,
-            frame_ts,
+            frame_packet,
+            render_ts,
+            skipped_frames,
             detections,
+            tracker_input_count,
             display_tracks,
             tentative_tracks,
         )

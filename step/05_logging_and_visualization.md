@@ -1,40 +1,54 @@
-# 05. Logging And Visualization
+# 05. 세션 로그와 3D 시각화
 
-주요 변경 파일:
-- `real-time/live_motion_viewer.py`
+## 로그를 넣은 이유
 
-상태 로그 저장:
-- 실행마다 세션 폴더를 자동 생성
-- 위치:
-  `logs/live_motion_viewer/<timestamp>/`
+처음에는 화면만 보고 “좋아졌다 / 안 좋아졌다”를 판단했는데, 이 방식으로는 왜 끊기는지 원인을 구분하기 어려웠습니다.
 
-세션 폴더 구성:
+그래서 세션 단위 로그를 저장하도록 바꿨습니다.
+
+## 로그 저장 구조
+
+실행할 때마다 아래 폴더가 생성됩니다.
+
+- `logs/live_motion_viewer/<session_timestamp>/`
+
+주요 파일:
 - `runtime_config.json`
-  실행 당시 cfg와 추적 파라미터 기록
 - `status_log.jsonl`
-  프레임별 상태 기록
 
-`status_log.jsonl`에 저장되는 것:
+기록되는 정보 예시:
+- frame index
 - 상태바 문자열
 - candidate 수
 - display track 수
 - tentative track 수
-- detection 상세 목록
-- display track 상세 목록
-- tentative track 상세 목록
+- detection 목록
+- display / tentative track 상세
 
-로그 목적:
-- candidate는 있는데 display가 0이 되는 구간 분석
-- lead id 유지 시간 분석
-- false track 생성 빈도 분석
-- 파라미터 튜닝 전후 비교
+이 로그 덕분에 이후에는:
+- continuity가 어디서 끊기는지
+- ghost 후보가 얼마나 자주 뜨는지
+- invalid frame과 display drop이 어떻게 연결되는지
 
-3D spatial view 추가:
-- 기존 `RDI / RAI` 위쪽에 spatial view 영역 추가
-- 현재는 true elevation이 아니라 `x / y track + confidence 기반 z` 시각화
-- 즉 `실제 3D 복원`이 아니라 `공간적으로 보기 쉬운 3D scene`이다
+를 정량적으로 볼 수 있게 되었습니다.
 
-OpenGL 관련 메모:
-- `pyqtgraph.opengl` 사용을 위해 `PyOpenGL`, `PyOpenGL_accelerate` 설치
-- bash/anaconda 환경과 system Python 환경이 달라서 user-site 경로를 자동 탐색하도록 수정
-- OpenGL import가 실패해도 앱이 완전히 죽지 않고 2D는 뜨도록 fallback 추가
+## 3D Spatial View 추가
+
+상단에 `3D Spatial View`를 추가해서, 현재 track를 x-y 공간 위에 보기 쉽게 표시했습니다.
+
+주의:
+- 이것은 “진짜 elevation 기반 3D 추적”이 아닙니다
+- 현재 z축은 confidence를 보기 좋게 띄운 pseudo-height입니다
+
+즉, 이 뷰는 사용자에게 공간감을 주는 시각화 도구이고, 실제 추정 결과는 여전히 x-y 중심입니다.
+
+## 이 단계의 의미
+
+이 단계부터는 단순 demo가 아니라,
+
+- “어떤 세션에서”
+- “어떤 파라미터로”
+- “어떤 증상이”
+- “얼마나 자주 나왔는지”
+
+를 분석 가능한 구조로 넘어갔다고 볼 수 있습니다.

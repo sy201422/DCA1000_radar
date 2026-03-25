@@ -222,6 +222,10 @@ class MultiTargetTracker:
         range_measurement_scale=0.0,
         confidence_measurement_scale=0.0,
         association_gate=5.99,
+        doppler_center_bin=None,
+        doppler_zero_guard_bins=2,
+        doppler_gate_bins=0,
+        doppler_cost_weight=0.0,
         max_missed_frames=8,
         min_confirmed_hits=2,
         report_miss_tolerance=2,
@@ -238,6 +242,12 @@ class MultiTargetTracker:
             raise ValueError("confidence_measurement_scale must be non-negative.")
         if association_gate <= 0:
             raise ValueError("association_gate must be positive.")
+        if doppler_zero_guard_bins < 0:
+            raise ValueError("doppler_zero_guard_bins must be non-negative.")
+        if doppler_gate_bins < 0:
+            raise ValueError("doppler_gate_bins must be non-negative.")
+        if doppler_cost_weight < 0:
+            raise ValueError("doppler_cost_weight must be non-negative.")
         if max_missed_frames < 0:
             raise ValueError("max_missed_frames must be non-negative.")
         if min_confirmed_hits < 1:
@@ -256,6 +266,10 @@ class MultiTargetTracker:
         self.range_measurement_scale = float(range_measurement_scale)
         self.confidence_measurement_scale = float(confidence_measurement_scale)
         self.association_gate = float(association_gate)
+        self.doppler_center_bin = None if doppler_center_bin is None else int(doppler_center_bin)
+        self.doppler_zero_guard_bins = int(doppler_zero_guard_bins)
+        self.doppler_gate_bins = int(doppler_gate_bins)
+        self.doppler_cost_weight = float(doppler_cost_weight)
         self.max_missed_frames = int(max_missed_frames)
         self.min_confirmed_hits = int(min_confirmed_hits)
         self.report_miss_tolerance = int(report_miss_tolerance)
@@ -326,6 +340,39 @@ class MultiTargetTracker:
             "confidence": confidence,
         }
 
+    def _signed_doppler_bin(self, doppler_bin: int) -> float:
+        if self.doppler_center_bin is None:
+            return float(doppler_bin)
+        return float(int(doppler_bin) - self.doppler_center_bin)
+
+    def _doppler_consistency_cost(self, track: _Track, measurement: dict) -> float:
+        if self.doppler_gate_bins <= 0 or self.doppler_cost_weight <= 0:
+            return 0.0
+
+        track_signed = self._signed_doppler_bin(track.doppler_bin)
+        measurement_signed = self._signed_doppler_bin(measurement["doppler_bin"])
+        track_is_near_zero = abs(track_signed) <= self.doppler_zero_guard_bins
+        measurement_is_near_zero = abs(measurement_signed) <= self.doppler_zero_guard_bins
+
+        if track_is_near_zero and measurement_is_near_zero:
+            return 0.0
+
+        doppler_delta = abs(track_signed - measurement_signed)
+        if doppler_delta > self.doppler_gate_bins:
+            return np.inf
+
+        normalized_delta = doppler_delta / max(float(self.doppler_gate_bins), 1.0)
+        penalty = normalized_delta * normalized_delta
+        sign_mismatch = (
+            (track_signed * measurement_signed) < 0.0
+            and not track_is_near_zero
+            and not measurement_is_near_zero
+        )
+        if sign_mismatch:
+            penalty += 1.0
+
+        return self.doppler_cost_weight * penalty
+
     def _mahalanobis_sq(self, track: _Track, measurement: dict) -> float:
         z = np.array([[measurement["x_m"]], [measurement["y_m"]]], dtype=float)
         innovation = z - (track.kf.H @ track.kf.x)
@@ -389,12 +436,16 @@ class MultiTargetTracker:
 
         for row, track_index in enumerate(track_indices):
             for col, measurement_index in enumerate(measurement_indices):
+                track = self._tracks[track_index]
+                measurement = measurements[measurement_index]
                 cost = self._mahalanobis_sq(
-                    self._tracks[track_index],
-                    measurements[measurement_index],
+                    track,
+                    measurement,
                 )
-                if cost <= gate:
-                    cost_matrix[row, col] = cost
+                doppler_cost = self._doppler_consistency_cost(track, measurement)
+                combined_cost = cost + doppler_cost
+                if combined_cost <= gate:
+                    cost_matrix[row, col] = combined_cost
 
         row_ind, col_ind = _linear_sum_assignment(cost_matrix)
 
@@ -501,7 +552,12 @@ class MultiTargetTracker:
             misses=track.misses,
         )
 
-    def update(self, detections, frame_ts: Optional[float] = None):
+    def update(
+        self,
+        detections,
+        frame_ts: Optional[float] = None,
+        allow_track_birth: bool = True,
+    ):
         measurements = [
             self._measurement_from_detection(detection)
             for detection in detections
@@ -546,27 +602,28 @@ class MultiTargetTracker:
             if track.state == TrackState.CONFIRMED:
                 track.state = TrackState.LOST
 
-        for measurement_index in unmatched_measurements:
-            measurement = measurements[measurement_index]
-            kf = self._build_kf(measurement)
-            self._tracks.append(
-                _Track(
-                    track_id=self._next_track_id,
-                    kf=kf,
-                    age=1,
-                    hits=1,
-                    misses=0,
-                    last_update_ts=frame_ts if frame_ts is not None else 0.0,
-                    confidence=float(measurement["confidence"]),
-                    score=float(measurement["score"]),
-                    state=TrackState.CONFIRMED if self.min_confirmed_hits <= 1 else TrackState.TENTATIVE,
-                    consecutive_hits=1,
-                    doppler_bin=int(measurement["doppler_bin"]),
-                    rdi_peak=float(measurement["rdi_peak"]),
-                    rai_peak=float(measurement["rai_peak"]),
+        if allow_track_birth:
+            for measurement_index in unmatched_measurements:
+                measurement = measurements[measurement_index]
+                kf = self._build_kf(measurement)
+                self._tracks.append(
+                    _Track(
+                        track_id=self._next_track_id,
+                        kf=kf,
+                        age=1,
+                        hits=1,
+                        misses=0,
+                        last_update_ts=frame_ts if frame_ts is not None else 0.0,
+                        confidence=float(measurement["confidence"]),
+                        score=float(measurement["score"]),
+                        state=TrackState.CONFIRMED if self.min_confirmed_hits <= 1 else TrackState.TENTATIVE,
+                        consecutive_hits=1,
+                        doppler_bin=int(measurement["doppler_bin"]),
+                        rdi_peak=float(measurement["rdi_peak"]),
+                        rai_peak=float(measurement["rai_peak"]),
+                    )
                 )
-            )
-            self._next_track_id += 1
+                self._next_track_id += 1
 
         self._tracks = [
             track for track in self._tracks
